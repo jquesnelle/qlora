@@ -20,6 +20,7 @@ import transformers
 from torch.nn.utils.rnn import pad_sequence
 import argparse
 from transformers import (
+    AutoConfig,
     AutoTokenizer,
     AutoModelForCausalLM,
     set_seed,
@@ -60,6 +61,14 @@ class ModelArguments:
     use_auth_token: Optional[bool] = field(
         default=False,
         metadata={"help": "Enables using Huggingface auth token from Git Credentials."}
+    )
+    use_fast_tokenizer: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Use fast tokenizer"}
+    )
+    mpt_attn_impl: Optional[str] = field(
+        default="triton",
+        metadata={"help": "For MPT models, the attention implementation to use. [triton|torch|flash]"}
     )
 
 @dataclass
@@ -277,9 +286,14 @@ def get_accelerate_model(args, checkpoint_dir):
 
     print(f'loading base model {args.model_name_or_path}...')
     compute_dtype = (torch.float16 if args.fp16 else (torch.bfloat16 if args.bf16 else torch.float32))
+    config = AutoConfig.from_pretrained(args.model_name_or_path, trust_remote_code=args.trust_remote_code)
+    if 'mpt-' in args.model_name_or_path:
+        config.attn_config["attn_impl"] = args.mpt_attn_impl
+        config.attn_config["attn_uses_sequence_id"] = False
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name_or_path,
         cache_dir=args.cache_dir,
+        config=config,
         load_in_4bit=args.bits == 4,
         load_in_8bit=args.bits == 8,
         device_map=device_map,
@@ -652,7 +666,7 @@ def train():
         args.model_name_or_path,
         cache_dir=args.cache_dir,
         padding_side="right",
-        use_fast=False, # Fast tokenizer giving issues.
+        use_fast=args.use_fast_tokenizer, # Fast tokenizer giving issues.
         tokenizer_type='llama' if 'llama' in args.model_name_or_path else None, # Needed for HF name change
         use_auth_token=args.use_auth_token,
     )
